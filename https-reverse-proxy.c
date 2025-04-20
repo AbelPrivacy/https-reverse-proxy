@@ -10,9 +10,10 @@
 #include <errno.h>
 
 
-#define SERVER_PORT 443
-#define BACKEND_HOST "127.0.0.1"
-#define BACKEND_PORT 8080
+int proxy_server_port;
+const char *backend_host;
+int backend_port;
+
 #define BUFFER_SIZE 1024*100
 
 void err_sys(const char* msg) {
@@ -26,8 +27,8 @@ int connect_backend() {
 
     struct sockaddr_in addr;
     addr.sin_family = AF_INET;
-    addr.sin_port = htons(BACKEND_PORT);
-    inet_pton(AF_INET, BACKEND_HOST, &addr.sin_addr);
+    addr.sin_port = htons(backend_port);
+    inet_pton(AF_INET, backend_host, &addr.sin_addr);
 
     if (connect(sockfd, (struct sockaddr*)&addr, sizeof(addr)) < 0)
         err_sys("Backend connect failed");
@@ -35,7 +36,21 @@ int connect_backend() {
     return sockfd;
 }
 
-int main() {
+int main(int argc, char** argv) {
+
+
+    if (argc == 4) {
+        proxy_server_port = atoi(argv[3]);
+        backend_host = argv[1];
+        backend_port = atoi(argv[2]);
+    } else if(argc != 1) {
+        return argc;
+    } else {
+        proxy_server_port = 443;
+        backend_host="127.0.0.1";
+        backend_port=8080;
+    }
+
     int sockfd, clientfd;
     struct sockaddr_in addr, client;
     socklen_t client_len = sizeof(client);
@@ -64,7 +79,7 @@ int main() {
 
     memset(&addr, 0, sizeof(addr));
     addr.sin_family = AF_INET;
-    addr.sin_port = htons(SERVER_PORT);
+    addr.sin_port = htons(proxy_server_port);
     addr.sin_addr.s_addr = INADDR_ANY;
 
     if (bind(sockfd, (struct sockaddr*)&addr, sizeof(addr)) < 0)
@@ -73,7 +88,7 @@ int main() {
     if (listen(sockfd, 5) < 0)
         err_sys("Listen failed");
 
-    printf("Proxy listening on port %d\n", SERVER_PORT);
+    printf("Proxy listening on port %d\n", proxy_server_port);
 
     while (1) {
         clientfd = accept(sockfd, (struct sockaddr*)&client, &client_len);
