@@ -1,5 +1,5 @@
-// Build with gcc
-// gcc https-reverse-proxy.c -I ~/homebrew/include/ -L ~/homebrew/Cellar/wolfssl/5.7.6/lib -lwolfssl -o https-reverse-proxy
+// Build with g++:
+// g++ --std=c++20 https-reverse-proxy.cpp -I ~/homebrew/include/ -L ~/homebrew/Cellar/wolfssl/5.7.6/lib -lwolfssl -o https-reverse-proxy
 
 
 #include <wolfssl/options.h>
@@ -12,6 +12,7 @@
 #include <stdlib.h>
 #include <stdio.h>
 #include <errno.h>
+#include <exception>
 
 
 int proxy_server_port;
@@ -95,50 +96,54 @@ int main(int argc, char** argv) {
     printf("Proxy listening on port %d\n", proxy_server_port);
 
     while (1) {
-        clientfd = accept(sockfd, (struct sockaddr*)&client, &client_len);
-        if (clientfd < 0) err_sys("Accept failed");
-        else printf("client accepted\n");
+        try {
+            clientfd = accept(sockfd, (struct sockaddr*)&client, &client_len);
+            if (clientfd < 0) err_sys("Accept failed");
+            else printf("client accepted\n");
 
-        WOLFSSL* ssl = wolfSSL_new(ctx);
-        wolfSSL_set_fd(ssl, clientfd);
+            WOLFSSL* ssl = wolfSSL_new(ctx);
+            wolfSSL_set_fd(ssl, clientfd);
 
-        if (wolfSSL_accept(ssl) != WOLFSSL_SUCCESS) {
-            fprintf(stderr, "TLS accept failed\n");
-            wolfSSL_free(ssl);
-            close(clientfd);
-            continue;
-        }
-
-        // Forward request
-        char buffer[BUFFER_SIZE];
-        int n = wolfSSL_read(ssl, buffer, BUFFER_SIZE);
-        if (n <= 0) {
-            wolfSSL_free(ssl);
-            close(clientfd);
-            continue;
-        }
-
-        int backendfd = connect_backend();
-        write(backendfd, buffer, n);
-
-        // Read backend response
-        int total_written, bytes_written, bytes_read;
-        while ((bytes_read = read(backendfd, buffer, BUFFER_SIZE)) > 0) {
-            total_written = 0;
-            while (total_written < bytes_read) {
-                bytes_written = wolfSSL_write(ssl, buffer + total_written, bytes_read - total_written);
-                if (bytes_written <= 0) {
-                    fprintf(stderr, "wolfSSL_write failed: %d\n", wolfSSL_get_error(ssl, bytes_written));
-                    break;
-                }
-                total_written += bytes_written;
+            if (wolfSSL_accept(ssl) != WOLFSSL_SUCCESS) {
+                fprintf(stderr, "TLS accept failed\n");
+                wolfSSL_free(ssl);
+                close(clientfd);
+                continue;
             }
+
+            // Forward request
+            char buffer[BUFFER_SIZE];
+            int n = wolfSSL_read(ssl, buffer, BUFFER_SIZE);
+            if (n <= 0) {
+                wolfSSL_free(ssl);
+                close(clientfd);
+                continue;
+            }
+
+            int backendfd = connect_backend();
+            write(backendfd, buffer, n);
+
+            // Read backend response
+            int total_written, bytes_written, bytes_read;
+            while ((bytes_read = read(backendfd, buffer, BUFFER_SIZE)) > 0) {
+                total_written = 0;
+                while (total_written < bytes_read) {
+                    bytes_written = wolfSSL_write(ssl, buffer + total_written, bytes_read - total_written);
+                    if (bytes_written <= 0) {
+                        fprintf(stderr, "wolfSSL_write failed: %d\n", wolfSSL_get_error(ssl, bytes_written));
+                        break;
+                    }
+                    total_written += bytes_written;
+                }
+            }
+            close(backendfd);
+            
+            wolfSSL_shutdown(ssl);
+            wolfSSL_free(ssl);
+            close(clientfd);
+        } catch (std::exception &e) {
+            fprintf(stderr, "Exception on proxy server while listening: %s", e.what());
         }
-        close(backendfd);
-        
-        wolfSSL_shutdown(ssl);
-        wolfSSL_free(ssl);
-        close(clientfd);
     }
 
     wolfSSL_CTX_free(ctx);
